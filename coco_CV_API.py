@@ -30,7 +30,7 @@ def filter_boxes(image_row,image_col,boxes):
     new_boxes=[element for element in ls_boxes if not(element[0]<0 or element[1]<0 or element[2]>image_col or element[3]>image_row)]
     return new_boxes
 
-def draw_boxes(image,boxes,classes=None,coco=None):
+def draw_boxes(image,boxes,classes=None,coco=None,resize=False):
     '''
     :param image: image cv_form
     :param boxes: a list storage some boxes
@@ -38,21 +38,22 @@ def draw_boxes(image,boxes,classes=None,coco=None):
     :param coco: coco object
     :return: image
     '''
-    if classes!=None and coco!=None:
+    image=copy.deepcopy(image)
+    if classes!=None and resize==False:
         assert len(boxes)==len(classes) and coco!=None,'boxes can not match classes OR coco is requested but None'
         for bbox,c in zip(boxes,classes):
             cv2.rectangle(image, (int(bbox[0]), int(bbox[1])), ((int(bbox[0]) + int(bbox[2])), (int(bbox[1]) + int(bbox[3]))), (0, 255, 0), 1)
             info=coco.loadCats(c)
             txt=info[0]['name']
             cv2.putText(image, txt, (int(bbox[0]), int(bbox[1])), cv2.FONT_HERSHEY_SIMPLEX, 0.2, (255, 0, 255), 1)
-    elif classes==None and coco==None:
+    elif coco==None:
         for bbox in boxes:
             cv2.rectangle(image, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), (0, 0, 255), 1)
-    elif classes!=None and coco==None:
+    elif classes!=None and resize==True:
         for bbox,c in zip(boxes,classes):
-            cv2.rectangle(image, (int(bbox[0]), int(bbox[1])), (int(bbox[2])), (int(bbox[3])), (0, 255, 0), 1)
+            cv2.rectangle(image, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), (0, 255, 0), 1)
             info=coco.loadCats(c)
-            txt=info['name']
+            txt=info[0]['name']
             cv2.putText(image, txt, (int(bbox[0]), int(bbox[1])), cv2.FONT_HERSHEY_SIMPLEX, 0.2, (255, 0, 255), 1)
     else:
         raise ('param wrone!!!!!!!!!!')
@@ -86,9 +87,13 @@ def iou(box_a,box_b):
     iou_score=float(area_overleap)/float(area_union+1e-6)
     return iou_score
 
-def normalizate_image(cocoimg,cocoann,minside=600):
+def normalizate_image(cocoimg,cocoann,coco,minside=600):
     r,c=cocoimg.shape[0],cocoimg.shape[1]
     new_img=copy.deepcopy(cocoimg)
+    masks,mask=getmask(cocoimg,cocoann,coco)
+    classes=getclasses(cocoann)
+    # print(classes)
+    new_ann = {}
     if r<=c:
         f=float(minside)/r
         resize_c=int(f*c)
@@ -98,7 +103,19 @@ def normalizate_image(cocoimg,cocoann,minside=600):
         resize_r=int(f*r)
         resize_c=minside
     new_img=cv2.resize(new_img,(resize_c,resize_r),interpolation=cv2.INTER_CUBIC)
-    new_ann=[]
+    masks=[cv2.resize(m,(resize_c,resize_r),interpolation=cv2.INTER_CUBIC) for m in masks]
+    mask=cv2.resize(mask,(resize_c,resize_r),interpolation=cv2.INTER_CUBIC)
+    new_boxes=[]
+    for stuff in cocoann:
+        box=stuff['bbox']
+        new_box=[int(box[0]*(resize_r/r)),int(box[1]*(resize_c/c)),int((box[0]+box[2])*(resize_r/r)),int((box[1]+box[3])*(resize_c/c))]
+        new_boxes.append(new_box)
+    new_ann['boxes']=new_boxes
+    new_ann['masks']=masks
+    new_ann['mask']=mask
+    new_ann['classes']=classes
+    return new_img,new_ann
+
 
 def getmask(cocoimg,cocoann,coco):
     '''
@@ -128,6 +145,7 @@ def getclasses(cocoann):
     return classes
 
 def draw_mask(image,masks,alpha=0.5):
+    image=copy.deepcopy(image)
     def random_colors(N, bright=True):
         """
         Generate random colors.
@@ -153,10 +171,25 @@ def draw_mask(image,masks,alpha=0.5):
                                       image[:, :, c])
     return image
 
-def coco_visualization(image,cocoann,coco):
-    classes=getclasses(cocoann)
-    masks,mask=getmask(image,cocoann,coco)
-    boxs=[bbox['bbox'] for bbox in cocoann]
-    image=draw_boxes(image,boxs,classes,coco)
-    image=draw_mask(image,masks)
+def coco_visualization(image,cocoann,coco,resize=False):
+    '''
+    :param image: image cv form
+    :param cocoann: coco ann or normalizate_image's new_ann
+    :param coco: coco object
+    :param resize: tow models, if resize is False, cocoann mean coco ann, otherwise mean normalizate_image's new_ann
+    :return: a cv form image where draw boxes an masks
+    '''
+    if resize:
+        boxes=cocoann['boxes']
+        masks=cocoann['masks']
+        mask=cocoann['mask']
+        classes=cocoann['classes']
+        image=draw_boxes(image,boxes,classes,coco,resize=True)
+        image = draw_mask(image, masks)
+    else:
+        classes=getclasses(cocoann)
+        masks,mask=getmask(image,cocoann,coco)
+        boxs=[bbox['bbox'] for bbox in cocoann]
+        image=draw_boxes(image,boxs,classes,coco)
+        image=draw_mask(image,masks)
     return image
